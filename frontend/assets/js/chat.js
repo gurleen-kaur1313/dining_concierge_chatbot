@@ -1,28 +1,59 @@
-var checkout = {};
+(function() {
+  var BOT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/></svg>';
+  var ERROR_TEXT = 'Oops, something went wrong. Please try again.';
 
-$(document).ready(function() {
-  var $messages = $('.messages-content'),
-    d, h, m,
-    i = 0;
+  var messages = document.getElementById('messages');
+  var form = document.getElementById('composer');
+  var input = document.getElementById('message-input');
+  var sendBtn = document.getElementById('send-btn');
+  var suggestions = document.getElementById('suggestions');
+  var busy = false;
 
-  $(window).load(function() {
-    $messages.mCustomScrollbar();
-    insertResponseMessage('Hi there, I\'m your personal Concierge. How can I help?');
-  });
-
-  function updateScrollbar() {
-    $messages.mCustomScrollbar("update").mCustomScrollbar('scrollTo', 'bottom', {
-      scrollInertia: 10,
-      timeout: 0
-    });
+  function timeNow() {
+    return new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   }
 
-  function setDate() {
-    d = new Date()
-    if (m != d.getMinutes()) {
-      m = d.getMinutes();
-      $('<div class="timestamp">' + d.getHours() + ':' + m + '</div>').appendTo($('.message:last'));
+  function scrollToBottom() {
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function addMessage(text, who) {
+    var row = document.createElement('div');
+    row.className = 'row ' + who;
+
+    if (who === 'bot') {
+      var avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.innerHTML = BOT_ICON;
+      row.appendChild(avatar);
     }
+
+    var wrap = document.createElement('div');
+    wrap.className = 'bubble-wrap';
+
+    var bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = text;  // textContent so user/bot text can never inject HTML
+
+    var time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = timeNow();
+
+    wrap.appendChild(bubble);
+    wrap.appendChild(time);
+    row.appendChild(wrap);
+    messages.appendChild(row);
+    scrollToBottom();
+  }
+
+  function showTyping() {
+    var row = document.createElement('div');
+    row.className = 'row bot typing';
+    row.innerHTML = '<div class="avatar">' + BOT_ICON + '</div>' +
+      '<div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+    messages.appendChild(row);
+    scrollToBottom();
+    return row;
   }
 
   function callChatbotApi(message) {
@@ -37,78 +68,78 @@ $(document).ready(function() {
     }, {});
   }
 
-  function insertMessage() {
-    msg = $('.message-input').val();
-    if ($.trim(msg) == '') {
-      return false;
+  function setBusy(value) {
+    busy = value;
+    sendBtn.disabled = value || input.value.trim() === '';
+  }
+
+  function sendMessage(text) {
+    text = text.trim();
+    if (!text || busy) {
+      return;
     }
-    $('<div class="message message-personal">' + msg + '</div>').appendTo($('.mCSB_container')).addClass('new');
-    setDate();
-    $('.message-input').val(null);
-    updateScrollbar();
+    suggestions.classList.add('hidden');
+    addMessage(text, 'user');
+    input.value = '';
+    autoResize();
+    setBusy(true);
 
-    callChatbotApi(msg)
-      .then((response) => {
-        console.log(response);
-        var data = response.data;
+    var typing = showTyping();
 
-        if (data.messages && data.messages.length > 0) {
-          console.log('received ' + data.messages.length + ' messages');
-
-          var messages = data.messages;
-
-          for (var message of messages) {
-            if (message.type === 'unstructured') {
-              insertResponseMessage(message.unstructured.text);
-            } else if (message.type === 'structured' && message.structured.type === 'product') {
-              var html = '';
-
-              insertResponseMessage(message.structured.text);
-
-              setTimeout(function() {
-                html = '<img src="' + message.structured.payload.imageUrl + '" witdth="200" height="240" class="thumbnail" /><b>' +
-                  message.structured.payload.name + '<br>$' +
-                  message.structured.payload.price +
-                  '</b><br><a href="#" onclick="' + message.structured.payload.clickAction + '()">' +
-                  message.structured.payload.buttonLabel + '</a>';
-                insertResponseMessage(html);
-              }, 1100);
-            } else {
-              console.log('not implemented');
-            }
-          }
-        } else {
-          insertResponseMessage('Oops, something went wrong. Please try again.');
+    callChatbotApi(text)
+      .then(function(response) {
+        var data = response.data || {};
+        var replies = (data.messages || []).filter(function(m) {
+          return m.type === 'unstructured' && m.unstructured && m.unstructured.text;
+        });
+        typing.remove();
+        if (replies.length === 0) {
+          addMessage(ERROR_TEXT, 'bot');
         }
+        replies.forEach(function(m) {
+          addMessage(m.unstructured.text, 'bot');
+        });
       })
-      .catch((error) => {
+      .catch(function(error) {
         console.log('an error occurred', error);
-        insertResponseMessage('Oops, something went wrong. Please try again.');
+        typing.remove();
+        addMessage(ERROR_TEXT, 'bot');
+      })
+      .then(function() {
+        setBusy(false);
+        input.focus();
       });
   }
 
-  $('.message-submit').click(function() {
-    insertMessage();
-  });
-
-  $(window).on('keydown', function(e) {
-    if (e.which == 13) {
-      insertMessage();
-      return false;
-    }
-  })
-
-  function insertResponseMessage(content) {
-    $('<div class="message loading new"><figure class="avatar"><img src="https://media.tenor.com/images/4c347ea7198af12fd0a66790515f958f/tenor.gif" /></figure><span></span></div>').appendTo($('.mCSB_container'));
-    updateScrollbar();
-
-    setTimeout(function() {
-      $('.message.loading').remove();
-      $('<div class="message new"><figure class="avatar"><img src="https://media.tenor.com/images/4c347ea7198af12fd0a66790515f958f/tenor.gif" /></figure>' + content + '</div>').appendTo($('.mCSB_container')).addClass('new');
-      setDate();
-      updateScrollbar();
-      i++;
-    }, 500);
+  function autoResize() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   }
 
-});
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    sendMessage(input.value);
+  });
+
+  // Enter sends, Shift+Enter adds a new line
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(input.value);
+    }
+  });
+
+  input.addEventListener('input', function() {
+    autoResize();
+    sendBtn.disabled = busy || input.value.trim() === '';
+  });
+
+  suggestions.addEventListener('click', function(e) {
+    if (e.target.classList.contains('chip')) {
+      sendMessage(e.target.textContent);
+    }
+  });
+
+  addMessage("Hi there, I'm your personal Concierge. Tell me what you're craving and I'll email you restaurant suggestions.", 'bot');
+  input.focus();
+})();
