@@ -73,11 +73,18 @@ def get_prev(email):
         print('state read error', e)
         return None
 
+def is_same(prev, loc, cuisine):
+    # LF2 may have created the row with only restaurantIds, so fields can be missing
+    return bool(prev and prev.get('location') == loc.lower() and prev.get('cuisine') == cuisine.lower())
+
 def save_state(email, loc, cuisine):
+    # update (not put) so LF2's restaurantIds survive for the repeat feature
     try:
-        ddb.Table(STATE_TABLE).put_item(Item={
-            'email': email, 'location': loc.lower(), 'cuisine': cuisine.lower(),
-            'updatedAt': datetime.datetime.utcnow().isoformat()})
+        ddb.Table(STATE_TABLE).update_item(Key={'email': email},
+            UpdateExpression='SET #l = :l, cuisine = :c, updatedAt = :t',
+            ExpressionAttributeNames={'#l': 'location'},
+            ExpressionAttributeValues={':l': loc.lower(), ':c': cuisine.lower(),
+                                       ':t': datetime.datetime.utcnow().isoformat()})
     except Exception as e:
         print('state write error', e)
 
@@ -93,7 +100,7 @@ def dining(event):
         loc, cuisine = val(slots, 'Location'), val(slots, 'Cuisine')
         email = val(slots, 'Email')
         prev = get_prev(email)
-        repeat = bool(prev and prev['location'] == loc.lower() and prev['cuisine'] == cuisine.lower())
+        repeat = is_same(prev, loc, cuisine)
         msg = {
             'Location': loc, 'Cuisine': cuisine.lower(),
             'DiningTime': val(slots, 'DiningTime'),
@@ -113,7 +120,7 @@ def dining(event):
             loc, cuisine = val(slots, 'Location'), val(slots, 'Cuisine')
             email = val(slots, 'Email')
             prev = get_prev(email)
-            same = bool(prev and prev['location'] == loc.lower() and prev['cuisine'] == cuisine.lower())
+            same = is_same(prev, loc, cuisine)
             conf = intent.get('confirmationState', 'None')
             if same and conf == 'None':
                 return confirm(intent, attrs,
