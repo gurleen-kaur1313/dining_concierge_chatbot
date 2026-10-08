@@ -89,14 +89,31 @@ def dining(event):
     attrs = event['sessionState'].get('sessionAttributes') or {}
     slots = intent['slots']
 
+    def _fulfill():
+        loc, cuisine = val(slots, 'Location'), val(slots, 'Cuisine')
+        email = val(slots, 'Email')
+        prev = get_prev(email)
+        repeat = bool(prev and prev['location'] == loc.lower() and prev['cuisine'] == cuisine.lower())
+        msg = {
+            'Location': loc, 'Cuisine': cuisine.lower(),
+            'DiningTime': val(slots, 'DiningTime'),
+            'NumberOfPeople': val(slots, 'NumberOfPeople'),
+            'Email': email, 'repeat': repeat,
+        }
+        sqs.send_message(QueueUrl=QUEUE_URL, MessageBody=json.dumps(msg))
+        save_state(email, loc, cuisine)
+        return close(intent, attrs,
+            "You're all set. Expect my suggestions by email shortly! Have a good day.")
+
     if src == 'DialogCodeHook':
         bad = validate(slots)
         if bad:
             return elicit(intent, attrs, bad[0], bad[1])
         if all(val(slots, s) for s in REQUIRED):
-            prev = get_prev(val(slots, 'Email'))
-            same = prev and prev['location'] == val(slots, 'Location').lower() \
-                        and prev['cuisine'] == val(slots, 'Cuisine').lower()
+            loc, cuisine = val(slots, 'Location'), val(slots, 'Cuisine')
+            email = val(slots, 'Email')
+            prev = get_prev(email)
+            same = bool(prev and prev['location'] == loc.lower() and prev['cuisine'] == cuisine.lower())
             conf = intent.get('confirmationState', 'None')
             if same and conf == 'None':
                 return confirm(intent, attrs,
@@ -104,23 +121,11 @@ def dining(event):
                     "Do you want the same recommendations as last time?")
             if same and conf == 'Denied':
                 return close(intent, attrs, "No problem. Just start a new request whenever you like.")
+            return _fulfill()
         return delegate(intent, attrs)
 
-    # FulfillmentCodeHook
-    loc, cuisine = val(slots, 'Location'), val(slots, 'Cuisine')
-    email = val(slots, 'Email')
-    prev = get_prev(email)
-    repeat = bool(prev and prev['location'] == loc.lower() and prev['cuisine'] == cuisine.lower())
-    msg = {
-        'Location': loc, 'Cuisine': cuisine.lower(),
-        'DiningTime': val(slots, 'DiningTime'),
-        'NumberOfPeople': val(slots, 'NumberOfPeople'),
-        'Email': email, 'repeat': repeat,
-    }
-    sqs.send_message(QueueUrl=QUEUE_URL, MessageBody=json.dumps(msg))
-    save_state(email, loc, cuisine)
-    return close(intent, attrs,
-        "You're all set. Expect my suggestions by email shortly! Have a good day.")
+    # FulfillmentCodeHook fallback
+    return _fulfill()
 
 
 def lambda_handler(event, context):
